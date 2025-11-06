@@ -156,8 +156,9 @@ function mapBookingToSlotStatus(dbStatus) {
   if (!dbStatus) return "free";
   if (dbStatus === "pending") return "pending";
   if (dbStatus === "approved" || dbStatus === "reserved") return "reserved";
-  if (dbStatus === "rejected" || dbStatus === "cancelled") return "disabled";
-  return "disabled";
+  // เคสที่ไม่ถือครองเวลา >> ให้ Free
+  if (dbStatus === "rejected" || dbStatus === "cancelled") return "free";
+  return "free";
 }
 
 // ===== Public / Student-facing =====
@@ -251,7 +252,8 @@ app.get("/api/student/bookings", (req, res) => {
   const pendingSql = baseSql + ` AND b.status = 'pending'
     ORDER BY b.booking_date ASC, ts.start_time ASC`;
 
-  const historySql = baseSql + ` AND b.status <> 'pending'
+  // *** ตัด cancelled ออก ***
+  const historySql = baseSql + ` AND b.status IN ('approved','reserved','rejected')
     ORDER BY b.booking_date DESC, ts.start_time DESC`;
 
   const sql = scope === "history" ? historySql : pendingSql;
@@ -262,15 +264,15 @@ app.get("/api/student/bookings", (req, res) => {
   });
 });
 
-// Student: ยกเลิก (เฉพาะ pending)
+
+// Student: ยกเลิก (เฉพาะ pending) — ลบ record ออกจริงเพื่อให้จองได้อีก
 app.post("/api/bookings/:id/cancel", (req, res) => {
   const bookingId = req.params.id;
   const userId = getUserIdFromSessionOr(req);
   if (!userId) return res.status(400).send("user_id required (no session)");
 
   const sql = `
-    UPDATE bookings
-       SET status='cancelled'
+    DELETE FROM bookings
      WHERE booking_id = ?
        AND user_id = ?
        AND status = 'pending'
@@ -313,6 +315,15 @@ app.get("/api/student/rooms/today", async (req, res) => {
         LIMIT 1
       `;
 
+      const toDisp = (s) => {
+        if (!s) return "free";
+        s = s.toLowerCase();
+        if (s === "pending") return "pending";
+        if (s === "approved" || s === "reserved") return "reserved";
+        // สำคัญ: cancelled / rejected -> free
+        return "free";
+      };
+
       const doMerge = (userAlreadyBooked) => {
         const grouped = new Map();
         for (const r of roomRows) grouped.set(r.room_id, { ...r, time_slots: [] });
@@ -320,13 +331,13 @@ app.get("/api/student/rooms/today", async (req, res) => {
         for (const row of tsRows) {
           const g = grouped.get(row.room_id);
           if (!g) continue;
-          const fromBooking = mapBookingToSlotStatus(row.booking_status);
-          const slotStatus = g.room_status === "disabled" ? "disabled" : fromBooking;
-
+          const slotStatus = g.room_status === "disabled" ? "disabled" : toDisp(row.booking_status);
           g.time_slots.push({
             slot_id: row.slot_id,
-            start: row.start_time,
-            end: row.end_time,
+            start: row.start_time,      // backward compatibility
+            end: row.end_time,          // backward compatibility
+            start_time: row.start_time, // ชื่อคีย์ให้ตรงกับหน้าอื่นๆ
+            end_time: row.end_time,
             status: slotStatus,
           });
         }
@@ -334,10 +345,10 @@ app.get("/api/student/rooms/today", async (req, res) => {
         const out = Array.from(grouped.values()).map((r) => ({
           room_id: r.room_id,
           room_name: r.room_name,
-          room_status: r.room_status, // free|disabled
-          image_url: r.image_url || null, // asset path จาก DB
+          room_status: r.room_status,
+          image_url: r.image_url || null,
           user_already_booked_today: !!userAlreadyBooked,
-          time_slots: r.time_slots.sort((a, b) => a.start.localeCompare(b.start)),
+          time_slots: r.time_slots.sort((a, b) => a.start_time.localeCompare(b.start_time)),
         }));
         res.json(out);
       };
@@ -484,9 +495,10 @@ app.get("/api/lecturer/summary", (_req, res) => {
 
   const sqls = [
     { key: "disabled", q: `SELECT COUNT(*) AS c FROM rooms WHERE status='disabled'` },
-    { key: "pending",  q: `SELECT COUNT(*) AS c FROM bookings WHERE booking_date='${theDate}' AND status='pending'` },
-    { key: "booked",   q: `SELECT COUNT(*) AS c FROM bookings WHERE booking_date='${theDate}' AND status IN ('approved','reserved')` },
-    { key: "available",q: `
+    { key: "pending", q: `SELECT COUNT(*) AS c FROM bookings WHERE booking_date='${theDate}' AND status='pending'` },
+    { key: "booked", q: `SELECT COUNT(*) AS c FROM bookings WHERE booking_date='${theDate}' AND status IN ('approved','reserved')` },
+    {
+      key: "available", q: `
       SELECT COUNT(*) AS c
       FROM rooms r
       WHERE r.status='free'
@@ -555,8 +567,9 @@ app.get("/api/rooms", (req, res) => {
         if (!s) return "free";
         if (s === "pending") return "pending";
         if (s === "approved" || s === "reserved") return "reserved";
-        if (s === "rejected" || s === "cancelled") return "disabled";
-        return "disabled";
+        // เคส rejected/cancelled -> free
+        if (s === "rejected" || s === "cancelled") return "free";
+        return "free";
       };
       for (const row of tsRows) {
         const g = grouped.get(row.room_id);
