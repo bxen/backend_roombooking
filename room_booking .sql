@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Oct 25, 2025 at 06:59 PM
+-- Generation Time: Nov 07, 2025 at 07:54 AM
 -- Server version: 10.4.32-MariaDB
 -- PHP Version: 8.0.30
 
@@ -35,6 +35,7 @@ CREATE TABLE `bookings` (
   `booking_date` date NOT NULL,
   `status` enum('pending','approved','rejected','reserved','cancelled') DEFAULT 'pending',
   `approver_id` int(11) DEFAULT NULL,
+  `rejection_reason` varchar(255) DEFAULT NULL,
   `purpose` text DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -48,44 +49,21 @@ CREATE TABLE `bookings` (
 CREATE TABLE `rooms` (
   `room_id` int(11) NOT NULL,
   `room_name` varchar(50) NOT NULL,
-  `status` enum('free','disabled') DEFAULT 'free'
+  `status` enum('free','disabled') DEFAULT 'free',
+  `image_url` varchar(255) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
 -- Dumping data for table `rooms`
 --
 
-INSERT INTO `rooms` (`room_id`, `room_name`, `status`) VALUES
-(1, 'Room A101', 'free'),
-(2, 'Room A102', 'free'),
-(3, 'Room B201', 'free'),
-(4, 'Room B202', 'free'),
-(5, 'Room C101', 'free'),
-(6, 'Room C102', 'free'),
-(7, 'Room C103', 'free');
-
--- --------------------------------------------------------
-
---
--- Table structure for table `room_status_log`
---
-
-CREATE TABLE `room_status_log` (
-  `log_id` int(11) NOT NULL,
-  `room_id` int(11) NOT NULL,
-  `slot_id` int(11) NOT NULL,
-  `date` date NOT NULL,
-  `status` enum('free','pending','reserved','disabled') DEFAULT 'free',
-  `updated_by` int(11) DEFAULT NULL,
-  `updated_at` timestamp NOT NULL DEFAULT current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
---
--- Dumping data for table `room_status_log`
---
-
-INSERT INTO `room_status_log` (`log_id`, `room_id`, `slot_id`, `date`, `status`, `updated_by`, `updated_at`) VALUES
-(0, 1, 1, '2025-10-26', 'free', 0, '2025-10-10 17:00:00');
+INSERT INTO `rooms` (`room_id`, `room_name`, `status`, `image_url`) VALUES
+(1, 'Room A101', 'disabled', 'images/roomA101.jpg'),
+(2, 'Room A102', 'free', 'images/roomA102.jpg'),
+(3, 'Room B201', 'free', 'images/roomB201.jpg'),
+(4, 'Room B202', 'free', 'images/roomB202.jpg'),
+(5, 'Room C101', 'free', 'images/roomC101.jpg'),
+(6, 'Room C103', 'free', 'images/roomC102.jpg');
 
 -- --------------------------------------------------------
 
@@ -119,6 +97,7 @@ CREATE TABLE `users` (
   `user_id` int(11) NOT NULL,
   `name` varchar(100) NOT NULL,
   `username` varchar(50) NOT NULL,
+  `email` varchar(255) DEFAULT NULL,
   `password` varchar(255) NOT NULL,
   `role` enum('student','staff','lecturer') NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -127,13 +106,13 @@ CREATE TABLE `users` (
 -- Dumping data for table `users`
 --
 
-INSERT INTO `users` (`user_id`, `name`, `username`, `password`, `role`) VALUES
-(1, 'naay', 'staffnaay', '$2b$10$9todN9mqsn.Nma5X8w5W2.9cs12qL4m8Om5hHxhr93gUtebm2CU/a', 'staff'),
-(2, 'pun', 'staffpun', '$2b$10$9todN9mqsn.Nma5X8w5W2.9cs12qL4m8Om5hHxhr93gUtebm2CU/a', 'staff'),
-(3, 'jame', 'lecjame', '$2b$10$9todN9mqsn.Nma5X8w5W2.9cs12qL4m8Om5hHxhr93gUtebm2CU/a', 'lecturer'),
-(4, 'jeeno', 'lecjeeno', '$2b$10$ax0G3h0ezpTZfaCvbdIGQ.bcghST.rcJa79QOn.lf9QLdvlO2MsL6', 'lecturer'),
-(5, 'ben', 'stdben', '$2b$10$ax0G3h0ezpTZfaCvbdIGQ.bcghST.rcJa79QOn.lf9QLdvlO2MsL6', 'student'),
-(6, 'boss', 'stdboss', '$2b$10$ax0G3h0ezpTZfaCvbdIGQ.bcghST.rcJa79QOn.lf9QLdvlO2MsL6', 'student');
+INSERT INTO `users` (`user_id`, `name`, `username`, `email`, `password`, `role`) VALUES
+(1, 'naay', 'staffnaay', NULL, '$2b$10$9todN9mqsn.Nma5X8w5W2.9cs12qL4m8Om5hHxhr93gUtebm2CU/a', 'staff'),
+(2, 'pun', 'staffpun', NULL, '$2b$10$9todN9mqsn.Nma5X8w5W2.9cs12qL4m8Om5hHxhr93gUtebm2CU/a', 'staff'),
+(3, 'jame', 'lecjame', NULL, '$2b$10$9todN9mqsn.Nma5X8w5W2.9cs12qL4m8Om5hHxhr93gUtebm2CU/a', 'lecturer'),
+(4, 'jeeno', 'lecjeeno', NULL, '$2b$10$ax0G3h0ezpTZfaCvbdIGQ.bcghST.rcJa79QOn.lf9QLdvlO2MsL6', 'lecturer'),
+(5, 'ben', 'stdben', NULL, '$2b$10$ax0G3h0ezpTZfaCvbdIGQ.bcghST.rcJa79QOn.lf9QLdvlO2MsL6', 'student'),
+(6, 'boss', 'stdboss', NULL, '$2b$10$ax0G3h0ezpTZfaCvbdIGQ.bcghST.rcJa79QOn.lf9QLdvlO2MsL6', 'student');
 
 --
 -- Indexes for dumped tables
@@ -144,15 +123,19 @@ INSERT INTO `users` (`user_id`, `name`, `username`, `password`, `role`) VALUES
 --
 ALTER TABLE `bookings`
   ADD PRIMARY KEY (`booking_id`),
+  ADD UNIQUE KEY `idx_unique_booking` (`room_id`,`slot_id`,`booking_date`),
   ADD KEY `user_id` (`user_id`),
   ADD KEY `room_id` (`room_id`),
-  ADD KEY `slot_id` (`slot_id`);
+  ADD KEY `slot_id` (`slot_id`),
+  ADD KEY `idx_booking_status` (`status`);
 
 --
 -- Indexes for table `rooms`
 --
 ALTER TABLE `rooms`
-  ADD PRIMARY KEY (`room_id`);
+  ADD PRIMARY KEY (`room_id`),
+  ADD UNIQUE KEY `uniq_room_name` (`room_name`),
+  ADD KEY `idx_room_status` (`status`);
 
 --
 -- Indexes for table `time_slots`
@@ -165,7 +148,8 @@ ALTER TABLE `time_slots`
 --
 ALTER TABLE `users`
   ADD PRIMARY KEY (`user_id`),
-  ADD UNIQUE KEY `username` (`username`);
+  ADD UNIQUE KEY `username` (`username`),
+  ADD UNIQUE KEY `uniq_email` (`email`);
 
 --
 -- AUTO_INCREMENT for dumped tables
@@ -175,13 +159,13 @@ ALTER TABLE `users`
 -- AUTO_INCREMENT for table `bookings`
 --
 ALTER TABLE `bookings`
-  MODIFY `booking_id` int(11) NOT NULL AUTO_INCREMENT;
+  MODIFY `booking_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=22;
 
 --
 -- AUTO_INCREMENT for table `rooms`
 --
 ALTER TABLE `rooms`
-  MODIFY `room_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=8;
+  MODIFY `room_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=38;
 
 --
 -- AUTO_INCREMENT for table `time_slots`
@@ -193,7 +177,7 @@ ALTER TABLE `time_slots`
 -- AUTO_INCREMENT for table `users`
 --
 ALTER TABLE `users`
-  MODIFY `user_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=10;
+  MODIFY `user_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=38;
 
 --
 -- Constraints for dumped tables
