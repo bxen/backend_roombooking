@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Nov 06, 2025 at 12:51 AM
+-- Generation Time: Nov 07, 2025 at 07:54 AM
 -- Server version: 10.4.32-MariaDB
 -- PHP Version: 8.0.30
 
@@ -64,29 +64,6 @@ INSERT INTO `rooms` (`room_id`, `room_name`, `status`, `image_url`) VALUES
 (4, 'Room B202', 'free', 'images/roomB202.jpg'),
 (5, 'Room C101', 'free', 'images/roomC101.jpg'),
 (6, 'Room C103', 'free', 'images/roomC102.jpg');
-
--- --------------------------------------------------------
-
---
--- Table structure for table `room_status_log`
---
-
-CREATE TABLE `room_status_log` (
-  `log_id` int(11) NOT NULL,
-  `room_id` int(11) NOT NULL,
-  `slot_id` int(11) NOT NULL,
-  `date` date NOT NULL,
-  `status` enum('free','pending','reserved','disabled') DEFAULT 'free',
-  `updated_by` int(11) DEFAULT NULL,
-  `updated_at` timestamp NOT NULL DEFAULT current_timestamp()
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
---
--- Dumping data for table `room_status_log`
---
-
-INSERT INTO `room_status_log` (`log_id`, `room_id`, `slot_id`, `date`, `status`, `updated_by`, `updated_at`) VALUES
-(1, 1, 1, '2025-10-26', 'free', 0, '2025-10-10 17:00:00');
 
 -- --------------------------------------------------------
 
@@ -161,13 +138,6 @@ ALTER TABLE `rooms`
   ADD KEY `idx_room_status` (`status`);
 
 --
--- Indexes for table `room_status_log`
---
-ALTER TABLE `room_status_log`
-  ADD PRIMARY KEY (`log_id`),
-  ADD UNIQUE KEY `uniq_room_slot_date` (`room_id`,`slot_id`,`date`);
-
---
 -- Indexes for table `time_slots`
 --
 ALTER TABLE `time_slots`
@@ -196,12 +166,6 @@ ALTER TABLE `bookings`
 --
 ALTER TABLE `rooms`
   MODIFY `room_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=38;
-
---
--- AUTO_INCREMENT for table `room_status_log`
---
-ALTER TABLE `room_status_log`
-  MODIFY `log_id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 
 --
 -- AUTO_INCREMENT for table `time_slots`
