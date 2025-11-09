@@ -8,10 +8,9 @@ const con = require("./db");
 // ===== App & middlewares =====
 const app = express();
 
-// NOTE: ปรับ origin ให้ตรงกับที่รัน Flutter Web/Emulator หรือ Postman ของคุณ
 app.use(
   cors({
-    origin: true, // หรือใส่เป็น "http://localhost:xxxxx"
+    origin: true,     // ใส่ origin ของคุณถ้าอยากล็อกให้ชัด
     credentials: true,
   })
 );
@@ -20,7 +19,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.use((req, res, next) => {
-  res.set('Cache-Control', 'no-store');
+  res.set("Cache-Control", "no-store");
   next();
 });
 
@@ -61,13 +60,12 @@ function requireDateParam(req, res, next) {
 
 // ===== Server Start =====
 const PORT = 3000;
-app.listen(3000, "0.0.0.0", () => console.log("Server on 0.0.0.0:3000"));
+app.listen(PORT, "0.0.0.0", () => console.log(`Server on 0.0.0.0:${PORT}`));
 
 // ===== Health =====
 app.get("/", (_req, res) => res.send("Room Booking API OK"));
 
 // ===== Auth =====
-// Login
 app.post("/login", (req, res) => {
   const { username, password } = req.body;
   if (!username || !password)
@@ -102,7 +100,6 @@ app.post("/login", (req, res) => {
 });
 
 // Register (สมัครเป็น student โดยค่าเริ่มต้น)
-// REPLACE ทั้ง endpoint /register
 app.post("/register", async (req, res) => {
   const { username, password, email } = req.body;
   if (!username || !password || !email) {
@@ -117,8 +114,9 @@ app.post("/register", async (req, res) => {
     con.query(sql, [username, username, email, hashedPassword], (err) => {
       if (err) {
         if (err.code === "ER_DUP_ENTRY") {
-          // แยกจาก unique key ของ username/email
-          const field = (err.message || "").includes("uniq_email") ? "email" : "username";
+          const field = (err.message || "").includes("uniq_email")
+            ? "email"
+            : "username";
           return res.status(409).json({ error: `${field} already exists` });
         }
         return res.status(500).json({ error: "DB error", detail: err.message });
@@ -130,7 +128,6 @@ app.post("/register", async (req, res) => {
   }
 });
 
-// Logout
 app.post("/logout", isAuthenticated, (req, res) => {
   req.session.destroy(() => res.send("Logged out"));
 });
@@ -142,28 +139,22 @@ function todayYMD() {
   const dd = String(now.getDate()).padStart(2, "0");
   return `${now.getFullYear()}-${mm}-${dd}`;
 }
-
 function getUserIdFromSessionOr(req) {
   const sid = req.session && req.session.userId;
-  const q = req.query && (req.query.user_id || req.query.uid || req.query.userId);
+  const q =
+    req.query && (req.query.user_id || req.query.uid || req.query.userId);
   const b = req.body && (req.body.user_id || req.body.uid || req.body.userId);
   return sid || q || b || null;
 }
-
 function mapBookingToSlotStatus(dbStatus) {
-  // UI ต้องการ [free|pending|reserved|disabled]
-  // DB เก็บ [pending|approved|rejected|reserved|cancelled]
   if (!dbStatus) return "free";
   if (dbStatus === "pending") return "pending";
   if (dbStatus === "approved" || dbStatus === "reserved") return "reserved";
-  // เคสที่ไม่ถือครองเวลา >> ให้ Free
   if (dbStatus === "rejected" || dbStatus === "cancelled") return "free";
   return "free";
 }
 
 // ===== Public / Student-facing =====
-
-// (เดิม) รายชื่อห้องที่ status = free — เหลือไว้เผื่อใช้งานอื่น (ไม่ชนกับตัวหลักที่รวม timeslots)
 app.get("/api/rooms/free-only", (_req, res) => {
   const sql = "SELECT room_id, room_name, status FROM rooms WHERE status='free'";
   con.query(sql, (err, results) => {
@@ -172,7 +163,6 @@ app.get("/api/rooms/free-only", (_req, res) => {
   });
 });
 
-// ข้อมูลห้อง + timeslots ณ วันที่ระบุ
 app.get("/api/rooms/:id", requireDateParam, (req, res) => {
   const roomId = req.params.id;
   const date = req.query.date;
@@ -225,14 +215,16 @@ app.post("/api/bookings", (req, res) => {
         return res.status(409).send("Slot already booked");
       return res.status(500).send("DB error");
     }
-    res.status(201).json({ message: "Booking created", booking_id: result.insertId });
+    res
+      .status(201)
+      .json({ message: "Booking created", booking_id: result.insertId });
   });
 });
 
 // Student: ประวัติของฉัน / pending
 app.get("/api/student/bookings", (req, res) => {
   const userId = getUserIdFromSessionOr(req);
-  if (!userId) return res.status(400).send("user_id required (no session)");
+  if (!userId) return res.status(400).json({ error: "user_id is required" });
   const scope = (req.query.scope || "pending").toLowerCase();
 
   const baseSql = `
@@ -249,12 +241,16 @@ app.get("/api/student/bookings", (req, res) => {
     WHERE b.user_id = ?
   `;
 
-  const pendingSql = baseSql + ` AND b.status = 'pending'
-    ORDER BY b.booking_date ASC, ts.start_time ASC`;
+  const pendingSql =
+    baseSql +
+    ` AND b.status = 'pending'
+      ORDER BY b.booking_date ASC, ts.start_time ASC`;
 
-  // *** ตัด cancelled ออก ***
-  const historySql = baseSql + ` AND b.status IN ('approved','reserved','rejected')
-    ORDER BY b.booking_date DESC, ts.start_time DESC`;
+  // ไม่เอา cancelled เข้า history
+  const historySql =
+    baseSql +
+    ` AND b.status IN ('approved','reserved','rejected')
+      ORDER BY b.booking_date DESC, ts.start_time DESC`;
 
   const sql = scope === "history" ? historySql : pendingSql;
 
@@ -264,12 +260,11 @@ app.get("/api/student/bookings", (req, res) => {
   });
 });
 
-
-// Student: ยกเลิก (เฉพาะ pending) — ลบ record ออกจริงเพื่อให้จองได้อีก
+// Student: ยกเลิก (เฉพาะ pending) — ลบ record ออกจริง + ตอบ JSON (กัน FormatException)
 app.post("/api/bookings/:id/cancel", (req, res) => {
   const bookingId = req.params.id;
   const userId = getUserIdFromSessionOr(req);
-  if (!userId) return res.status(400).send("user_id required (no session)");
+  if (!userId) return res.status(400).json({ error: "user_id is required" });
 
   const sql = `
     DELETE FROM bookings
@@ -278,14 +273,14 @@ app.post("/api/bookings/:id/cancel", (req, res) => {
        AND status = 'pending'
   `;
   con.query(sql, [bookingId, userId], (err, r) => {
-    if (err) return res.status(500).send("DB error: " + err.message);
-    if (r.affectedRows === 0) return res.status(404).send("Not found or cannot cancel");
-    res.send("Booking cancelled");
+    if (err) return res.status(500).json({ error: "DB error", detail: err.message });
+    if (r.affectedRows === 0)
+      return res.status(404).json({ error: "Not found or cannot cancel" });
+    res.json({ message: "Booking cancelled" });
   });
 });
 
-// ===== Student bundle endpoints to match mobile app =====
-// รายห้อง + timeslots ของ “วันนี้” พร้อม image_url และ flag ว่า user นี้จองไปแล้วหรือยัง
+// ===== Student bundle endpoints =====
 app.get("/api/student/rooms/today", async (req, res) => {
   const userId = getUserIdFromSessionOr(req);
   const theDate = todayYMD();
@@ -320,23 +315,24 @@ app.get("/api/student/rooms/today", async (req, res) => {
         s = s.toLowerCase();
         if (s === "pending") return "pending";
         if (s === "approved" || s === "reserved") return "reserved";
-        // สำคัญ: cancelled / rejected -> free
         return "free";
       };
 
       const doMerge = (userAlreadyBooked) => {
         const grouped = new Map();
-        for (const r of roomRows) grouped.set(r.room_id, { ...r, time_slots: [] });
+        for (const r of roomRows)
+          grouped.set(r.room_id, { ...r, time_slots: [] });
 
         for (const row of tsRows) {
           const g = grouped.get(row.room_id);
           if (!g) continue;
-          const slotStatus = g.room_status === "disabled" ? "disabled" : toDisp(row.booking_status);
+          const slotStatus =
+            g.room_status === "disabled" ? "disabled" : toDisp(row.booking_status);
           g.time_slots.push({
             slot_id: row.slot_id,
-            start: row.start_time,      // backward compatibility
-            end: row.end_time,          // backward compatibility
-            start_time: row.start_time, // ชื่อคีย์ให้ตรงกับหน้าอื่นๆ
+            start: row.start_time,
+            end: row.end_time,
+            start_time: row.start_time,
             end_time: row.end_time,
             status: slotStatus,
           });
@@ -348,7 +344,9 @@ app.get("/api/student/rooms/today", async (req, res) => {
           room_status: r.room_status,
           image_url: r.image_url || null,
           user_already_booked_today: !!userAlreadyBooked,
-          time_slots: r.time_slots.sort((a, b) => a.start_time.localeCompare(b.start_time)),
+          time_slots: r.time_slots.sort((a, b) =>
+            a.start_time.localeCompare(b.start_time)
+          ),
         }));
         res.json(out);
       };
@@ -362,7 +360,7 @@ app.get("/api/student/rooms/today", async (req, res) => {
   });
 });
 
-// ===== Staff: จัดการห้อง (เดิม) =====
+// ===== Staff =====
 app.get("/api/staff/rooms", (_req, res) => {
   const sql = "SELECT room_id, room_name, status FROM rooms ORDER BY room_id ASC";
   con.query(sql, (err, rows) => {
@@ -374,11 +372,15 @@ app.get("/api/staff/rooms", (_req, res) => {
 app.post("/api/staff/rooms", (req, res) => {
   const { room_name, image_url } = req.body;
   if (!room_name) return res.status(400).json({ error: "room_name required" });
-  const sql = "INSERT INTO rooms (room_name, status, image_url) VALUES (?, 'free', ?)";
+  const sql =
+    "INSERT INTO rooms (room_name, status, image_url) VALUES (?, 'free', ?)";
   con.query(sql, [room_name, image_url || null], (err, result) => {
     if (err) {
-      if (err.code === "ER_DUP_ENTRY") return res.status(409).json({ error: "Room name already exists" });
-      return res.status(500).json({ error: "DB error", detail: err.message });
+      if (err.code === "ER_DUP_ENTRY")
+        return res.status(409).json({ error: "Room name already exists" });
+      return res
+        .status(500)
+        .json({ error: "DB error", detail: err.message });
     }
     res.status(201).json({ message: "Room created", room_id: result.insertId });
   });
@@ -431,11 +433,12 @@ app.get("/api/lecturer/requests", (_req, res) => {
 
 app.post("/api/lecturer/requests/:id/approve", (req, res) => {
   const id = req.params.id;
-  const approverId = getUserIdFromSessionOr(req); // << สำคัญ
+  const approverId = getUserIdFromSessionOr(req);
   const sql = `UPDATE bookings SET status='approved', approver_id=? WHERE booking_id=? AND status='pending'`;
   con.query(sql, [approverId, id], (err, r) => {
     if (err) return res.status(500).json({ error: "DB error" });
-    if (r.affectedRows === 0) return res.status(404).json({ error: "Not found or already processed" });
+    if (r.affectedRows === 0)
+      return res.status(404).json({ error: "Not found or already processed" });
     res.json({ message: "Approved" });
   });
 });
@@ -453,12 +456,24 @@ app.post("/api/lecturer/requests/:id/reject", (req, res) => {
   `;
   con.query(sql, [approverId, reason || null, id], (err, r) => {
     if (err) return res.status(500).json({ error: "DB error" });
-    if (r.affectedRows === 0) return res.status(404).json({ error: "Not found or already processed" });
+    if (r.affectedRows === 0)
+      return res.status(404).json({ error: "Not found or already processed" });
     res.json({ message: "Rejected" });
   });
 });
 
-app.get("/api/lecturer/history", (_req, res) => {
+// >>> Lecturer history — เห็นเฉพาะของตัวเอง <<<
+// >>> Lecturer history — เห็นเฉพาะรายการที่ "ฉัน" อนุมัติ/ปฏิเสธ <<<
+// >>> Lecturer history — เห็นเฉพาะรายการที่ "ฉัน" เป็นคนอนุมัติ/ปฏิเสธเท่านั้น <<<
+app.get("/api/lecturer/history", (req, res) => {
+  const uid = getUserIdFromSessionOr(req);
+  // ป้องกันเปิด endpoint โดยไม่ระบุตัวตน
+  if (!uid) return res.status(400).json({ error: "user_id is required" });
+  // ถ้ามี session role ให้บังคับเฉพาะ lecturer (กัน role อื่นมาเรียก)
+  if (req.session?.role && req.session.role !== "lecturer") {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+
   const sql = `
     SELECT 
       b.booking_id,
@@ -469,24 +484,25 @@ app.get("/api/lecturer/history", (_req, res) => {
       ts.start_time,
       ts.end_time,
       u.username  AS borrower,
-      ua.username AS approved_by   -- << เพิ่มคอลัมน์นี้
+      ua.username AS approved_by
     FROM bookings b
-    JOIN users u  ON b.user_id = u.user_id
-    JOIN rooms r  ON b.room_id = r.room_id
+    JOIN users u   ON b.user_id    = u.user_id
+    JOIN rooms r   ON b.room_id    = r.room_id
     JOIN time_slots ts ON b.slot_id = ts.slot_id
-    LEFT JOIN users ua ON b.approver_id = ua.user_id  -- << เพิ่ม join
-    WHERE b.status IN ('approved','rejected')
-    ORDER BY b.booking_date DESC, ts.start_time DESC;
+    LEFT JOIN users ua ON b.approver_id = ua.user_id
+    WHERE b.status IN ('approved','rejected') 
+      AND b.approver_id IS NOT NULL         -- กันแถวเก่าที่ไม่ได้บันทึก approver
+      AND b.approver_id = ?                 -- ฟิลเตอร์ให้เห็นเฉพาะที่ "ฉัน" อนุมัติ/ปฏิเสธ
+    ORDER BY b.booking_date DESC, ts.start_time DESC
   `;
-  con.query(sql, (err, rows) => {
-    if (err) return res.status(500).send("DB error");
+  con.query(sql, [uid], (err, rows) => {
+    if (err) return res.status(500).json({ error: "DB error" });
     res.json(rows);
   });
 });
 
-// NEW: Lecturer summary (ใช้หน้า Lecturer Home dashboard)
+// Lecturer summary
 app.get("/api/lecturer/summary", (_req, res) => {
-  // ใช้ logic เดียวกับ staff summary เพื่อความง่าย
   const today = new Date();
   const y = today.getFullYear();
   const m = String(today.getMonth() + 1).padStart(2, "0");
@@ -498,7 +514,8 @@ app.get("/api/lecturer/summary", (_req, res) => {
     { key: "pending", q: `SELECT COUNT(*) AS c FROM bookings WHERE booking_date='${theDate}' AND status='pending'` },
     { key: "booked", q: `SELECT COUNT(*) AS c FROM bookings WHERE booking_date='${theDate}' AND status IN ('approved','reserved')` },
     {
-      key: "available", q: `
+      key: "available",
+      q: `
       SELECT COUNT(*) AS c
       FROM rooms r
       WHERE r.status='free'
@@ -507,45 +524,47 @@ app.get("/api/lecturer/summary", (_req, res) => {
           LEFT JOIN bookings b
             ON b.room_id=r.room_id AND b.slot_id=ts.slot_id AND b.booking_date='${theDate}'
           WHERE COALESCE(b.status,'free')='free'
-        )` },
+        )`,
+    },
   ];
   const out = {};
   let i = 0;
   const run = () => {
-    if (i >= sqls.length) return res.json({
-      available: out.available || 0,
-      pending: out.pending || 0,
-      booked: out.booked || 0,
-      disabled: out.disabled || 0,
-    });
+    if (i >= sqls.length)
+      return res.json({
+        available: out.available || 0,
+        pending: out.pending || 0,
+        booked: out.booked || 0,
+        disabled: out.disabled || 0,
+      });
     con.query(sqls[i].q, (e, r) => {
       if (e) return res.status(500).json({ error: "DB error" });
       out[sqls[i].key] = r[0].c;
-      i++; run();
+      i++;
+      run();
     });
   };
   run();
 });
 
-// ===== NEW: Unified Room APIs used by Staff pages =====
-// GET /api/rooms?date=YYYY-MM-DD
-// ส่งคืน: [{ room_id, room_name, status, image_path, timeslots: [{slot_id,start_time,end_time,status}] }]
-// REPLACE ทั้ง endpoint /api/rooms
+// ===== Unified Room APIs (Staff/Shared) =====
 app.get("/api/rooms", (req, res) => {
   const date = req.query.date;
   if (!date) {
-    // โหมดเดิม: คืนเฉพาะห้อง free (ใช้กับบางหน้าเก่า)
-    const sql = "SELECT room_id, room_name, status, image_url FROM rooms WHERE status='free'";
+    const sql =
+      "SELECT room_id, room_name, status, image_url FROM rooms WHERE status='free'";
     return con.query(sql, (err, results) => {
       if (err) return res.status(500).json({ error: "DB error" });
       res.json(results);
     });
   }
 
-  // โหมดใหม่สำหรับ staff_assetlist: ทุกห้อง + timeslots ณ วันนั้น
   const roomsSql = `SELECT room_id, room_name, status, image_url FROM rooms ORDER BY room_id ASC`;
   con.query(roomsSql, (err, roomRows) => {
-    if (err) return res.status(500).json({ error: "DB error", detail: err.message });
+    if (err)
+      return res
+        .status(500)
+        .json({ error: "DB error", detail: err.message });
 
     const tsSql = `
       SELECT r.room_id, ts.slot_id, ts.start_time, ts.end_time, b.status AS booking_status
@@ -557,24 +576,26 @@ app.get("/api/rooms", (req, res) => {
        AND b.booking_date = ?
     `;
     con.query(tsSql, [date], (err2, tsRows) => {
-      if (err2) return res.status(500).json({ error: "DB error", detail: err2.message });
+      if (err2)
+        return res
+          .status(500)
+          .json({ error: "DB error", detail: err2.message });
 
       const grouped = new Map();
       for (const r of roomRows) {
         grouped.set(r.room_id, { ...r, timeslots: [] });
       }
-      const mapBookingToSlotStatus = (s) => {
+      const mapBookingToSlotStatusLocal = (s) => {
         if (!s) return "free";
         if (s === "pending") return "pending";
         if (s === "approved" || s === "reserved") return "reserved";
-        // เคส rejected/cancelled -> free
         if (s === "rejected" || s === "cancelled") return "free";
         return "free";
       };
       for (const row of tsRows) {
         const g = grouped.get(row.room_id);
         if (!g) continue;
-        const fromBooking = mapBookingToSlotStatus(row.booking_status);
+        const fromBooking = mapBookingToSlotStatusLocal(row.booking_status);
         const finalStatus = g.status === "disabled" ? "disabled" : fromBooking;
         g.timeslots.push({
           slot_id: row.slot_id,
@@ -588,8 +609,6 @@ app.get("/api/rooms", (req, res) => {
   });
 });
 
-
-// POST /api/rooms  (add room + image)
 app.post("/api/rooms", (req, res) => {
   const { room_name, status, image_url } = req.body || {};
   if (!room_name) return res.status(400).send("room_name required");
@@ -605,7 +624,6 @@ app.post("/api/rooms", (req, res) => {
   });
 });
 
-// PATCH /api/rooms/:id (update name/status/image)
 app.patch("/api/staff/rooms/:id", (req, res) => {
   const id = req.params.id;
   const { room_name, status, image_url } = req.body;
@@ -619,20 +637,24 @@ app.patch("/api/staff/rooms/:id", (req, res) => {
         image_url = COALESCE(?, image_url)
     WHERE room_id=?
   `;
-  con.query(sql, [room_name || null, status || null, image_url || null, id], (err, r) => {
-    if (err) {
-      if (err.code === "ER_DUP_ENTRY") {
-        return res.status(409).json({ error: "Room name already exists" });
+  con.query(
+    sql,
+    [room_name || null, status || null, image_url || null, id],
+    (err, r) => {
+      if (err) {
+        if (err.code === "ER_DUP_ENTRY") {
+          return res.status(409).json({ error: "Room name already exists" });
+        }
+        return res.status(500).json({ error: "DB error", detail: err.message });
       }
-      return res.status(500).json({ error: "DB error", detail: err.message });
+      if (r.affectedRows === 0)
+        return res.status(404).json({ error: "Room not found" });
+      res.json({ message: "Room updated" });
     }
-    if (r.affectedRows === 0) return res.status(404).json({ error: "Room not found" });
-    res.json({ message: "Room updated" });
-  });
+  );
 });
 
 // Staff Dashboard Summary
-// NEW: Staff summary (ใช้ในหน้า Staff Home dashboard)
 app.get("/api/staff/summary", (_req, res) => {
   const today = new Date();
   const y = today.getFullYear();
@@ -677,7 +699,7 @@ app.get("/api/staff/summary", (_req, res) => {
   });
 });
 
-// NEW: Staff history (ใช้ใน SthistoryPage)
+// Staff history
 app.get("/api/staff/history", (_req, res) => {
   const sql = `
     SELECT b.booking_id, b.booking_date, b.status, b.purpose, b.rejection_reason AS reason,
