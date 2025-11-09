@@ -400,18 +400,59 @@ app.put("/api/staff/rooms/:id", (req, res) => {
   });
 });
 
+
+//
+// ===== ⬇️⬇️⬇️ จุดที่ 1: Endpoint /disable (ตัวเช็ก Booking) ⬇️⬇️⬇️ =====
+// (นี่คือโค้ดที่ถูกต้องสำหรับบรรทัด ~310)
+//
 app.patch("/api/staff/rooms/:id/disable", (req, res) => {
   const id = req.params.id;
-  con.query(
-    "UPDATE rooms SET status='disabled' WHERE room_id=?",
-    [id],
-    (err, r) => {
-      if (err) return res.status(500).send("DB error");
-      if (r.affectedRows === 0) return res.status(404).send("Room not found");
-      res.send("Room disabled");
+  const today = todayYMD(); // ดึงวันที่ปัจจุบันจาก Helper
+
+  // 1. ตรวจสอบก่อนว่ามี Booking ที่ยัง Active (pending, approved, reserved)
+  //    นับตั้งแต่วันนี้เป็นต้นไปหรือไม่
+  const checkSql = `
+    SELECT COUNT(*) AS active_count
+    FROM bookings
+    WHERE room_id = ?
+      AND status IN ('pending', 'approved', 'reserved')
+      AND booking_date >= ?
+  `;
+
+  con.query(checkSql, [id, today], (errCheck, results) => {
+    if (errCheck) {
+      return res.status(500).json({ error: "DB check error", detail: errCheck.message });
     }
-  );
+
+    const activeCount = results[0].active_count;
+
+    // 2. ถ้ามี Booking ค้างอยู่ (Count > 0) ให้ส่ง Error กลับไป (ต้องเป็น JSON)
+    if (activeCount > 0) {
+      return res.status(409).json({ // 409 Conflict
+        error: "Cannot disable room",
+        message: "This room has active or pending bookings."
+      });
+    }
+
+    // 3. ถ้าไม่มี (Count = 0) ถึงจะอนุญาตให้ disable ห้องได้
+    con.query(
+      "UPDATE rooms SET status='disabled' WHERE room_id=?",
+      [id],
+      (errUpdate, r) => {
+        if (errUpdate) {
+          return res.status(500).json({ error: "DB update error", detail: errUpdate.message });
+        }
+        if (r.affectedRows === 0) {
+          return res.status(404).json({ error: "Room not found" });
+        }
+        // [!] แก้ FormatException ตรงนี้: ต้องส่ง JSON กลับไป
+        res.json({ message: "Room disabled" });
+      }
+    );
+  });
 });
+// ===== ⬆️⬆️⬆️ สิ้นสุดจุดที่ 1 ⬆️⬆️⬆️ =====
+
 
 // ===== Lecturer: อนุมัติ/ปฏิเสธ =====
 app.get("/api/lecturer/requests", (_req, res) => {
@@ -463,8 +504,6 @@ app.post("/api/lecturer/requests/:id/reject", (req, res) => {
 });
 
 // >>> Lecturer history — เห็นเฉพาะของตัวเอง <<<
-// >>> Lecturer history — เห็นเฉพาะรายการที่ "ฉัน" อนุมัติ/ปฏิเสธ <<<
-// >>> Lecturer history — เห็นเฉพาะรายการที่ "ฉัน" เป็นคนอนุมัติ/ปฏิเสธเท่านั้น <<<
 app.get("/api/lecturer/history", (req, res) => {
   const uid = getUserIdFromSessionOr(req);
   // ป้องกันเปิด endpoint โดยไม่ระบุตัวตน
@@ -491,8 +530,8 @@ app.get("/api/lecturer/history", (req, res) => {
     JOIN time_slots ts ON b.slot_id = ts.slot_id
     LEFT JOIN users ua ON b.approver_id = ua.user_id
     WHERE b.status IN ('approved','rejected') 
-      AND b.approver_id IS NOT NULL         -- กันแถวเก่าที่ไม่ได้บันทึก approver
-      AND b.approver_id = ?                 -- ฟิลเตอร์ให้เห็นเฉพาะที่ "ฉัน" อนุมัติ/ปฏิเสธ
+      AND b.approver_id IS NOT NULL
+      AND b.approver_id = ?
     ORDER BY b.booking_date DESC, ts.start_time DESC
   `;
   con.query(sql, [uid], (err, rows) => {
@@ -624,6 +663,11 @@ app.post("/api/rooms", (req, res) => {
   });
 });
 
+
+//
+// ===== ⬇️⬇️⬇️ จุดที่ 2: Endpoint /:id (ตัวทั่วไป, ใช้ Enable/Edit) ⬇️⬇️⬇️ =====
+// (นี่คือโค้ดที่ถูกต้องสำหรับบรรทัด ~431)
+//
 app.patch("/api/staff/rooms/:id", (req, res) => {
   const id = req.params.id;
   const { room_name, status, image_url } = req.body;
@@ -653,6 +697,8 @@ app.patch("/api/staff/rooms/:id", (req, res) => {
     }
   );
 });
+// ===== ⬆️⬆️⬆️ สิ้นสุดจุดที่ 2 ⬆️⬆️⬆️ =====
+
 
 // Staff Dashboard Summary
 app.get("/api/staff/summary", (_req, res) => {
