@@ -58,10 +58,31 @@ function requireDateParam(req, res, next) {
   next();
 }
 
+// const cron = require("node-cron");
+
+// // รันทุกวันตอนเที่ยงคืน
+// cron.schedule("0 0 * * *", () => {
+//   const sql = `
+//     UPDATE bookings
+//     SET status='rejected', rejection_reason='Booking expired'
+//     WHERE status='pending'
+//       AND booking_date < CURDATE()
+//   `;
+//   con.query(sql, (err, result) => {
+//     if (err) {
+//       console.error("Auto-reject cron failed:", err);
+//     } else {
+//       console.log(`Auto-rejected ${result.affectedRows} expired bookings.`);
+//     }
+//   });
+// }, {
+//   timezone: "Asia/Bangkok"
+// });
+
 const cron = require("node-cron");
 
-// รันทุกวันตอนเที่ยงคืน
-cron.schedule("0 0 * * *", () => {
+// ฟังก์ชัน auto-reject
+function autoRejectExpiredBookings() {
   const sql = `
     UPDATE bookings
     SET status='rejected', rejection_reason='Booking expired'
@@ -70,13 +91,19 @@ cron.schedule("0 0 * * *", () => {
   `;
   con.query(sql, (err, result) => {
     if (err) {
-      console.error("Auto-reject cron failed:", err);
+      console.error("Auto-reject failed:", err);
     } else {
       console.log(`Auto-rejected ${result.affectedRows} expired bookings.`);
     }
   });
-}, {
-  timezone: "Asia/Bangkok"
+}
+
+// 1️⃣ รันทันทีตอน start server
+autoRejectExpiredBookings();
+
+// 2️⃣ ตั้ง cron รันทุกวันตอนเที่ยงคืน
+cron.schedule("0 0 * * *", autoRejectExpiredBookings, {
+  timezone: "Asia/Bangkok",
 });
 
 
