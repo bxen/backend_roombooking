@@ -58,6 +58,30 @@ function requireDateParam(req, res, next) {
   next();
 }
 
+const cron = require("node-cron");
+
+// รันทุกวันตอนเที่ยงคืน
+cron.schedule("0 0 * * *", () => {
+  const sql = `
+    UPDATE bookings
+    SET status='rejected', rejection_reason='Booking expired'
+    WHERE status='pending'
+      AND booking_date < CURDATE()
+  `;
+  con.query(sql, (err, result) => {
+    if (err) {
+      console.error("Auto-reject cron failed:", err);
+    } else {
+      console.log(`Auto-rejected ${result.affectedRows} expired bookings.`);
+    }
+  });
+}, {
+  timezone: "Asia/Bangkok"
+});
+
+
+
+
 // ===== Server Start =====
 const PORT = 3000;
 app.listen(PORT, "0.0.0.0", () => console.log(`Server on 0.0.0.0:${PORT}`));
