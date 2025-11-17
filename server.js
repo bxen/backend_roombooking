@@ -592,6 +592,7 @@ app.get("/api/lecturer/history", (req, res) => {
 });
 
 // Lecturer summary
+
 app.get("/api/lecturer/summary", (_req, res) => {
   const today = new Date();
   const y = today.getFullYear();
@@ -599,42 +600,44 @@ app.get("/api/lecturer/summary", (_req, res) => {
   const d = String(today.getDate()).padStart(2, "0");
   const theDate = `${y}-${m}-${d}`;
 
-  const sqls = [
-    { key: "disabled", q: `SELECT COUNT(*) AS c FROM rooms WHERE status='disabled'` },
-    { key: "pending", q: `SELECT COUNT(*) AS c FROM bookings WHERE booking_date='${theDate}' AND status='pending'` },
-    { key: "booked", q: `SELECT COUNT(*) AS c FROM bookings WHERE booking_date='${theDate}' AND status IN ('approved','reserved')` },
-    {
-      key: "available",
-      q: `
-      SELECT COUNT(*) AS c
-      FROM rooms r
-      WHERE r.status='free'
-        AND EXISTS (
-          SELECT 1 FROM time_slots ts
-          LEFT JOIN bookings b
-            ON b.room_id=r.room_id AND b.slot_id=ts.slot_id AND b.booking_date='${theDate}'
-          WHERE COALESCE(b.status,'free')='free'
-        )`,
-    },
-  ];
-  const out = {};
-  let i = 0;
-  const run = () => {
-    if (i >= sqls.length)
-      return res.json({
-        available: out.available || 0,
-        pending: out.pending || 0,
-        booked: out.booked || 0,
-        disabled: out.disabled || 0,
-      });
-    con.query(sqls[i].q, (e, r) => {
-      if (e) return res.status(500).json({ error: "DB error" });
-      out[sqls[i].key] = r[0].c;
-      i++;
-      run();
+  const sql = `
+    SELECT 
+      CASE
+        WHEN r.status = 'disabled' THEN 'disabled'
+        ELSE COALESCE(b.status, 'free')
+      END AS slot_status,
+      COUNT(*) AS c
+    FROM rooms r
+    CROSS JOIN time_slots ts
+    LEFT JOIN bookings b
+      ON b.room_id = r.room_id
+      AND b.slot_id = ts.slot_id
+      AND b.booking_date = ?
+    GROUP BY slot_status
+  `;
+
+  con.query(sql, [theDate], (err, rows) => {
+    if (err) return res.status(500).json({ error: "DB error" });
+
+    const sum = {
+      free: 0,
+      pending: 0,
+      reserved: 0,
+      approved: 0,
+      disabled: 0
+    };
+
+    rows.forEach(r => {
+      sum[r.slot_status] = r.c;
     });
-  };
-  run();
+
+    res.json({
+      available: sum.free,
+      pending: sum.pending,
+      booked: (sum.approved || 0) + (sum.reserved || 0),
+      disabled: sum.disabled
+    });
+  });
 });
 
 // ===== Unified Room APIs (Staff/Shared) =====
@@ -759,42 +762,46 @@ app.get("/api/staff/summary", (_req, res) => {
   const d = String(today.getDate()).padStart(2, "0");
   const theDate = `${y}-${m}-${d}`;
 
-  const q = {
-    disabledRooms: `SELECT COUNT(*) AS c FROM rooms WHERE status='disabled'`,
-    pending: `SELECT COUNT(*) AS c FROM bookings WHERE booking_date=? AND status='pending'`,
-    reserved: `SELECT COUNT(*) AS c FROM bookings WHERE booking_date=? AND status IN ('approved','reserved')`,
-    available: `
-      SELECT COUNT(*) AS c
-      FROM rooms r
-      WHERE r.status='free'
-        AND EXISTS (
-          SELECT 1 FROM time_slots ts
-          LEFT JOIN bookings b
-            ON b.room_id=r.room_id AND b.slot_id=ts.slot_id AND b.booking_date=?
-          WHERE COALESCE(b.status,'free')='free'
-        )
-    `,
-  };
+  const sql = `
+    SELECT 
+      CASE
+        WHEN r.status = 'disabled' THEN 'disabled'
+        ELSE COALESCE(b.status, 'free')
+      END AS slot_status,
+      COUNT(*) AS c
+    FROM rooms r
+    CROSS JOIN time_slots ts
+    LEFT JOIN bookings b
+      ON b.room_id = r.room_id
+      AND b.slot_id = ts.slot_id
+      AND b.booking_date = ?
+    GROUP BY slot_status
+  `;
 
-  con.query(q.disabledRooms, (e1, r1) => {
-    if (e1) return res.status(500).json({ error: "DB error" });
-    con.query(q.pending, [theDate], (e2, r2) => {
-      if (e2) return res.status(500).json({ error: "DB error" });
-      con.query(q.reserved, [theDate], (e3, r3) => {
-        if (e3) return res.status(500).json({ error: "DB error" });
-        con.query(q.available, [theDate], (e4, r4) => {
-          if (e4) return res.status(500).json({ error: "DB error" });
-          res.json({
-            available: r4[0].c,
-            pending: r2[0].c,
-            booked: r3[0].c,
-            disabled: r1[0].c,
-          });
-        });
-      });
+  con.query(sql, [theDate], (err, rows) => {
+    if (err) return res.status(500).json({ error: "DB error" });
+
+    const sum = {
+      free: 0,
+      pending: 0,
+      approved: 0,
+      reserved: 0,
+      disabled: 0
+    };
+
+    rows.forEach(r => {
+      sum[r.slot_status] = r.c;
+    });
+
+    res.json({
+      available: sum.free,
+      pending: sum.pending,
+      booked: (sum.approved || 0) + (sum.reserved || 0),
+      disabled: sum.disabled
     });
   });
 });
+
 
 // Staff history
 app.get("/api/staff/history", (_req, res) => {
