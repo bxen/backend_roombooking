@@ -4,13 +4,14 @@ const session = require("express-session");
 const cors = require("cors");
 const bcrypt = require("bcrypt");
 const con = require("./db");
+const cron = require("node-cron");
 
 // ===== App & middlewares =====
 const app = express();
 
 app.use(
   cors({
-    origin: true,     // ใส่ origin ของคุณถ้าอยากล็อกให้ชัด
+    origin: true, // ใส่ origin ของ frontend ถ้าอยากล็อกให้ชัด
     credentials: true,
   })
 );
@@ -32,7 +33,7 @@ app.use(
   })
 );
 
-// ===== Helpers =====
+// ===== Helpers (Auth) =====
 function isAuthenticated(req, res, next) {
   if (req.session && req.session.userId) return next();
   return res.status(401).send("Unauthorized");
@@ -58,30 +59,28 @@ function requireDateParam(req, res, next) {
   next();
 }
 
-// const cron = require("node-cron");
+// ===== Utilities =====
+function todayYMD() {
+  const now = new Date();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+  return `${now.getFullYear()}-${mm}-${dd}`;
+}
 
-// // รันทุกวันตอนเที่ยงคืน
-// cron.schedule("0 0 * * *", () => {
-//   const sql = `
-//     UPDATE bookings
-//     SET status='rejected', rejection_reason='Booking expired'
-//     WHERE status='pending'
-//       AND booking_date < CURDATE()
-//   `;
-//   con.query(sql, (err, result) => {
-//     if (err) {
-//       console.error("Auto-reject cron failed:", err);
-//     } else {
-//       console.log(`Auto-rejected ${result.affectedRows} expired bookings.`);
-//     }
-//   });
-// }, {
-//   timezone: "Asia/Bangkok"
-// });
+// ตอนนี้ให้ดึง user แค่จาก session เท่านั้น (ไม่อ่านจาก body/query แล้ว)
+function getUserIdFromSessionOr(req) {
+  return req.session && req.session.userId ? req.session.userId : null;
+}
 
-const cron = require("node-cron");
+function mapBookingToSlotStatus(dbStatus) {
+  if (!dbStatus) return "free";
+  if (dbStatus === "pending") return "pending";
+  if (dbStatus === "approved" || dbStatus === "reserved") return "reserved";
+  if (dbStatus === "rejected" || dbStatus === "cancelled") return "free";
+  return "free";
+}
 
-// ฟังก์ชัน auto-reject
+// ===== Auto Reject (Cron) =====
 function autoRejectExpiredBookings() {
   const sql = `
     UPDATE bookings
@@ -101,13 +100,10 @@ function autoRejectExpiredBookings() {
 // 1️⃣ รันทันทีตอน start server
 autoRejectExpiredBookings();
 
-// 2️⃣ ตั้ง cron รันทุกวันตอนเที่ยงคืน
+// 2️⃣ ตั้ง cron รันทุกวันตอนเที่ยงคืน (Asia/Bangkok)
 cron.schedule("0 0 * * *", autoRejectExpiredBookings, {
   timezone: "Asia/Bangkok",
 });
-
-
-
 
 // ===== Server Start =====
 const PORT = 3000;
@@ -136,6 +132,7 @@ app.post("/login", (req, res) => {
       const ok = await bcrypt.compare(password, user.password);
       if (!ok) return res.status(401).send("Wrong password");
 
+      // set session
       req.session.userId = user.user_id;
       req.session.role = user.role;
 
@@ -183,29 +180,25 @@ app.post("/logout", isAuthenticated, (req, res) => {
   req.session.destroy(() => res.send("Logged out"));
 });
 
-// ===== Utilities =====
-function todayYMD() {
-  const now = new Date();
-  const mm = String(now.getMonth() + 1).padStart(2, "0");
-  const dd = String(now.getDate()).padStart(2, "0");
-  return `${now.getFullYear()}-${mm}-${dd}`;
-}
-function getUserIdFromSessionOr(req) {
-  const sid = req.session && req.session.userId;
-  const q =
-    req.query && (req.query.user_id || req.query.uid || req.query.userId);
-  const b = req.body && (req.body.user_id || req.body.uid || req.body.userId);
-  return sid || q || b || null;
-}
-function mapBookingToSlotStatus(dbStatus) {
-  if (!dbStatus) return "free";
-  if (dbStatus === "pending") return "pending";
-  if (dbStatus === "approved" || dbStatus === "reserved") return "reserved";
-  if (dbStatus === "rejected" || dbStatus === "cancelled") return "free";
-  return "free";
-}
+// =======================
+//   SESSION PROTECTION
+// =======================
 
-// ===== Public / Student-facing =====
+// ทุก /api/* ต้อง login ก่อน
+app.use("/api", isAuthenticated);
+
+// /api/student/* ต้องเป็น role student
+app.use("/api/student", isStudent);
+
+// /api/staff/* ต้องเป็น role staff
+app.use("/api/staff", isStaff);
+
+// /api/lecturer/* ต้องเป็น role lecturer
+app.use("/api/lecturer", isLecturer);
+
+// ===== Public / Student-facing (แต่ตอนนี้ต้องมี session แล้วเพราะ prefix /api) =====
+
+// เฉพาะห้อง status='free'
 app.get("/api/rooms/free-only", (_req, res) => {
   const sql = "SELECT room_id, room_name, status FROM rooms WHERE status='free'";
   con.query(sql, (err, results) => {
@@ -214,6 +207,7 @@ app.get("/api/rooms/free-only", (_req, res) => {
   });
 });
 
+// ดูห้อง + timeslot สำหรับวันที่ระบุ
 app.get("/api/rooms/:id", requireDateParam, (req, res) => {
   const roomId = req.params.id;
   const date = req.query.date;
@@ -247,11 +241,12 @@ app.get("/api/rooms/:id", requireDateParam, (req, res) => {
   });
 });
 
-// Student: จองห้อง (pending)
-app.post("/api/bookings", (req, res) => {
+// Student: จองห้อง (pending) — ผูกกับ session เท่านั้น
+app.post("/api/bookings", isStudent, (req, res) => {
   const { room_id, slot_id, date, purpose } = req.body;
-  const userId = req.session.userId || req.body.user_id;
-  if (!userId) return res.status(400).send("user_id required (no session)");
+  const userId = req.session.userId; // only session
+  if (!userId) return res.status(401).send("Unauthorized");
+
   if (!room_id || !slot_id || !date || !purpose)
     return res.status(400).send("Missing fields");
 
@@ -275,7 +270,7 @@ app.post("/api/bookings", (req, res) => {
 // Student: ประวัติของฉัน / pending
 app.get("/api/student/bookings", (req, res) => {
   const userId = getUserIdFromSessionOr(req);
-  if (!userId) return res.status(400).json({ error: "user_id is required" });
+  if (!userId) return res.status(401).json({ error: "Unauthorized" });
   const scope = (req.query.scope || "pending").toLowerCase();
 
   const baseSql = `
@@ -311,11 +306,11 @@ app.get("/api/student/bookings", (req, res) => {
   });
 });
 
-// Student: ยกเลิก (เฉพาะ pending) — ลบ record ออกจริง + ตอบ JSON (กัน FormatException)
+// Student: ยกเลิก (เฉพาะ pending) — ลบ record ออกจริง
 app.post("/api/bookings/:id/cancel", (req, res) => {
   const bookingId = req.params.id;
   const userId = getUserIdFromSessionOr(req);
-  if (!userId) return res.status(400).json({ error: "user_id is required" });
+  if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
   const sql = `
     DELETE FROM bookings
@@ -332,7 +327,7 @@ app.post("/api/bookings/:id/cancel", (req, res) => {
 });
 
 // ===== Student bundle endpoints =====
-app.get("/api/student/rooms/today", async (req, res) => {
+app.get("/api/student/rooms/today", (req, res) => {
   const userId = getUserIdFromSessionOr(req);
   const theDate = todayYMD();
 
@@ -451,17 +446,11 @@ app.put("/api/staff/rooms/:id", (req, res) => {
   });
 });
 
-
-//
-// ===== ⬇️⬇️⬇️ จุดที่ 1: Endpoint /disable (ตัวเช็ก Booking) ⬇️⬇️⬇️ =====
-// (นี่คือโค้ดที่ถูกต้องสำหรับบรรทัด ~310)
-//
+// Disable room (ถ้าไม่มี booking active)
 app.patch("/api/staff/rooms/:id/disable", (req, res) => {
   const id = req.params.id;
-  const today = todayYMD(); // ดึงวันที่ปัจจุบันจาก Helper
+  const today = todayYMD();
 
-  // 1. ตรวจสอบก่อนว่ามี Booking ที่ยัง Active (pending, approved, reserved)
-  //    นับตั้งแต่วันนี้เป็นต้นไปหรือไม่
   const checkSql = `
     SELECT COUNT(*) AS active_count
     FROM bookings
@@ -477,15 +466,13 @@ app.patch("/api/staff/rooms/:id/disable", (req, res) => {
 
     const activeCount = results[0].active_count;
 
-    // 2. ถ้ามี Booking ค้างอยู่ (Count > 0) ให้ส่ง Error กลับไป (ต้องเป็น JSON)
     if (activeCount > 0) {
-      return res.status(409).json({ // 409 Conflict
+      return res.status(409).json({
         error: "Cannot disable room",
-        message: "This room has active or pending bookings."
+        message: "This room has active or pending bookings.",
       });
     }
 
-    // 3. ถ้าไม่มี (Count = 0) ถึงจะอนุญาตให้ disable ห้องได้
     con.query(
       "UPDATE rooms SET status='disabled' WHERE room_id=?",
       [id],
@@ -496,14 +483,11 @@ app.patch("/api/staff/rooms/:id/disable", (req, res) => {
         if (r.affectedRows === 0) {
           return res.status(404).json({ error: "Room not found" });
         }
-        // [!] แก้ FormatException ตรงนี้: ต้องส่ง JSON กลับไป
         res.json({ message: "Room disabled" });
       }
     );
   });
 });
-// ===== ⬆️⬆️⬆️ สิ้นสุดจุดที่ 1 ⬆️⬆️⬆️ =====
-
 
 // ===== Lecturer: อนุมัติ/ปฏิเสธ =====
 app.get("/api/lecturer/requests", (_req, res) => {
@@ -526,7 +510,13 @@ app.get("/api/lecturer/requests", (_req, res) => {
 app.post("/api/lecturer/requests/:id/approve", (req, res) => {
   const id = req.params.id;
   const approverId = getUserIdFromSessionOr(req);
-  const sql = `UPDATE bookings SET status='approved', approver_id=? WHERE booking_id=? AND status='pending'`;
+  if (!approverId) return res.status(401).json({ error: "Unauthorized" });
+
+  const sql = `
+    UPDATE bookings 
+       SET status='approved', approver_id=? 
+     WHERE booking_id=? AND status='pending'
+  `;
   con.query(sql, [approverId, id], (err, r) => {
     if (err) return res.status(500).json({ error: "DB error" });
     if (r.affectedRows === 0)
@@ -539,6 +529,8 @@ app.post("/api/lecturer/requests/:id/reject", (req, res) => {
   const id = req.params.id;
   const { reason } = req.body;
   const approverId = getUserIdFromSessionOr(req);
+  if (!approverId) return res.status(401).json({ error: "Unauthorized" });
+
   const sql = `
     UPDATE bookings
        SET status='rejected',
@@ -554,15 +546,10 @@ app.post("/api/lecturer/requests/:id/reject", (req, res) => {
   });
 });
 
-// >>> Lecturer history — เห็นเฉพาะของตัวเอง <<<
+// Lecturer history — เห็นเฉพาะของตัวเอง
 app.get("/api/lecturer/history", (req, res) => {
   const uid = getUserIdFromSessionOr(req);
-  // ป้องกันเปิด endpoint โดยไม่ระบุตัวตน
-  if (!uid) return res.status(400).json({ error: "user_id is required" });
-  // ถ้ามี session role ให้บังคับเฉพาะ lecturer (กัน role อื่นมาเรียก)
-  if (req.session?.role && req.session.role !== "lecturer") {
-    return res.status(403).json({ error: "Forbidden" });
-  }
+  if (!uid) return res.status(401).json({ error: "Unauthorized" });
 
   const sql = `
     SELECT 
@@ -592,7 +579,6 @@ app.get("/api/lecturer/history", (req, res) => {
 });
 
 // Lecturer summary
-
 app.get("/api/lecturer/summary", (_req, res) => {
   const today = new Date();
   const y = today.getFullYear();
@@ -624,10 +610,10 @@ app.get("/api/lecturer/summary", (_req, res) => {
       pending: 0,
       reserved: 0,
       approved: 0,
-      disabled: 0
+      disabled: 0,
     };
 
-    rows.forEach(r => {
+    rows.forEach((r) => {
       sum[r.slot_status] = r.c;
     });
 
@@ -635,7 +621,7 @@ app.get("/api/lecturer/summary", (_req, res) => {
       available: sum.free,
       pending: sum.pending,
       booked: (sum.approved || 0) + (sum.reserved || 0),
-      disabled: sum.disabled
+      disabled: sum.disabled,
     });
   });
 });
@@ -717,11 +703,7 @@ app.post("/api/rooms", (req, res) => {
   });
 });
 
-
-//
-// ===== ⬇️⬇️⬇️ จุดที่ 2: Endpoint /:id (ตัวทั่วไป, ใช้ Enable/Edit) ⬇️⬇️⬇️ =====
-// (นี่คือโค้ดที่ถูกต้องสำหรับบรรทัด ~431)
-//
+// ใช้ enable/edit room (ทั่วไป)
 app.patch("/api/staff/rooms/:id", (req, res) => {
   const id = req.params.id;
   const { room_name, status, image_url } = req.body;
@@ -751,8 +733,6 @@ app.patch("/api/staff/rooms/:id", (req, res) => {
     }
   );
 });
-// ===== ⬆️⬆️⬆️ สิ้นสุดจุดที่ 2 ⬆️⬆️⬆️ =====
-
 
 // Staff Dashboard Summary
 app.get("/api/staff/summary", (_req, res) => {
@@ -786,10 +766,10 @@ app.get("/api/staff/summary", (_req, res) => {
       pending: 0,
       approved: 0,
       reserved: 0,
-      disabled: 0
+      disabled: 0,
     };
 
-    rows.forEach(r => {
+    rows.forEach((r) => {
       sum[r.slot_status] = r.c;
     });
 
@@ -797,11 +777,10 @@ app.get("/api/staff/summary", (_req, res) => {
       available: sum.free,
       pending: sum.pending,
       booked: (sum.approved || 0) + (sum.reserved || 0),
-      disabled: sum.disabled
+      disabled: sum.disabled,
     });
   });
 });
-
 
 // Staff history
 app.get("/api/staff/history", (_req, res) => {
